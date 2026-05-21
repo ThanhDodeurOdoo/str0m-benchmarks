@@ -9,10 +9,8 @@ function existingLog(path) {
     return path && fs.existsSync(path) ? path : null;
 }
 
-const baseCpuPath = existingLog(useDefaultLogPaths ? "logs/base-cpu.log" : logPaths[0]);
-const arcCpuPath = existingLog(useDefaultLogPaths ? "logs/arc-cpu.log" : logPaths[1]);
-const baseMemoryPath = existingLog(useDefaultLogPaths ? "logs/base-memory.log" : logPaths[2]);
-const arcMemoryPath = existingLog(useDefaultLogPaths ? "logs/arc-memory.log" : logPaths[3]);
+const cpuPath = existingLog(useDefaultLogPaths ? "logs/meta-cpu.log" : logPaths[0]);
+const memoryPath = existingLog(useDefaultLogPaths ? "logs/meta-memory.log" : logPaths[1]);
 
 function read(path) {
     return fs.readFileSync(path, "utf8");
@@ -109,14 +107,14 @@ function cpuTable(baseRows, arcRows) {
     const lines = [
         "### str0m direct RTP relay path CPU",
         "",
-        "| payload | users | baseline vec | arc + rx | gain |",
+        "| payload | users | Default Meta Vec | Ref Meta | gain |",
         "|---|---:|---:|---:|---:|",
     ];
 
     for (const base of orderedRows(baseRows)) {
         const arc = arcRows.get(base.key);
         if (!arc) {
-            throw new Error(`missing arc CPU row for ${base.key}`);
+            throw new Error(`missing Ref Meta CPU row for ${base.key}`);
         }
 
         lines.push(
@@ -175,14 +173,14 @@ function memoryTable(baseRows, arcRows) {
     const lines = [
         "### str0m direct RTP relay path allocations",
         "",
-        "| payload | users | baseline vec | arc + rx | saved |",
+        "| payload | users | Default Meta Vec | Ref Meta | saved |",
         "|---|---:|---:|---:|---:|",
     ];
 
     for (const base of orderedRows(baseRows)) {
         const arc = arcRows.get(base.key);
         if (!arc) {
-            throw new Error(`missing arc allocation row for ${base.key}`);
+            throw new Error(`missing Ref Meta allocation row for ${base.key}`);
         }
 
         lines.push(
@@ -221,21 +219,22 @@ function parseCallgrindId(id) {
 }
 
 function callgrindGroup(functionName) {
-    if (functionName === "rtp_event_fanout") {
-        return {
-            key: "rtp_event_fanout",
-            label: "RTP event fanout",
-            order: 0,
-        };
+    const groups = {
+        rtp_event_fanout_base_vec: ["rtp_event_fanout", "RTP event fanout", 0, "base"],
+        rtp_event_fanout_arc_meta: ["rtp_event_fanout", "RTP event fanout", 0, "arc"],
+        full_relay_base_vec: ["full_relay", "full relay", 1, "base"],
+        full_relay_arc_meta: ["full_relay", "full relay", 1, "arc"],
+    };
+    const group = groups[functionName];
+    if (!group) {
+        return null;
     }
-    if (functionName === "full_relay") {
-        return {
-            key: "full_relay",
-            label: "full relay",
-            order: 1,
-        };
-    }
-    return null;
+    return {
+        key: group[0],
+        label: group[1],
+        order: group[2],
+        variant: group[3],
+    };
 }
 
 function walkFiles(dir) {
@@ -264,15 +263,30 @@ function metricValue(metric) {
     throw new Error(`unexpected callgrind metric value: ${JSON.stringify(metric)}`);
 }
 
-function bothMetricValues(metricDiff) {
-    const both = metricDiff?.metrics?.Both;
-    if (!Array.isArray(both) || both.length !== 2) {
+function singleMetricValue(metricDiff) {
+    if (!metricDiff) {
         return null;
     }
-    return {
-        arc: metricValue(both[0]),
-        base: metricValue(both[1]),
-    };
+
+    const metrics = metricDiff.metrics;
+    if (metrics && typeof metrics === "object") {
+        for (const key of ["Single", "This", "New", "Left", "Right"]) {
+            if (key in metrics) {
+                return metricValue(metrics[key]);
+            }
+        }
+
+        const values = Object.values(metrics).filter(
+            (value) =>
+                typeof value === "number" ||
+                (value && typeof value === "object" && ("Int" in value || "Float" in value)),
+        );
+        if (values.length === 1) {
+            return metricValue(values[0]);
+        }
+    }
+
+    return metricValue(metricDiff);
 }
 
 function callgrindSummary(summary) {
@@ -303,8 +317,8 @@ function parseCallgrindSummaries(dir) {
             continue;
         }
 
-        const instructions = bothMetricValues(callgrindSummary(summary)?.Ir);
-        if (!instructions) {
+        const instructions = singleMetricValue(callgrindSummary(summary)?.Ir);
+        if (instructions === null) {
             continue;
         }
 
@@ -314,15 +328,31 @@ function parseCallgrindSummaries(dir) {
             group: group.label,
             groupKey: group.key,
             groupOrder: group.order,
-            base: instructions.base,
-            arc: instructions.arc,
+            variant: group.variant,
+            instructions,
         });
     }
 
-    return rows.sort(
-        (left, right) =>
-            left.groupOrder - right.groupOrder || left.payload - right.payload || left.users - right.users,
-    );
+    const byKey = new Map();
+    for (const row of rows) {
+        const key = `${row.groupKey}-${row.key}`;
+        const combined = byKey.get(key) ?? {
+            payload: row.payload,
+            users: row.users,
+            group: row.group,
+            groupKey: row.groupKey,
+            groupOrder: row.groupOrder,
+        };
+        combined[row.variant] = row.instructions;
+        byKey.set(key, combined);
+    }
+
+    return [...byKey.values()]
+        .filter((row) => row.base !== undefined && row.arc !== undefined)
+        .sort(
+            (left, right) =>
+                left.groupOrder - right.groupOrder || left.payload - right.payload || left.users - right.users,
+        );
 }
 
 function formatInstructionCount(value) {
@@ -342,7 +372,7 @@ function callgrindTable(rows) {
     const lines = [
         "### str0m direct RTP relay path Callgrind instructions",
         "",
-        "| path | payload | users | baseline vec | arc + rx | gain |",
+        "| path | payload | users | Default Meta Vec | Ref Meta | gain |",
         "|---|---:|---:|---:|---:|---:|",
     ];
 
@@ -358,8 +388,8 @@ function callgrindTable(rows) {
 }
 
 const callgrindRows = parseCallgrindSummaries(process.env.CALLGRIND_DIR);
-const hasCpu = Boolean(baseCpuPath && arcCpuPath);
-const hasMemory = Boolean(baseMemoryPath && arcMemoryPath);
+const hasCpu = Boolean(cpuPath);
+const hasMemory = Boolean(memoryPath);
 const criterionRequired = process.env.CRITERION_REQUIRED === "true";
 if (process.env.CALLGRIND_REQUIRED === "true" && callgrindRows.length === 0) {
     throw new Error(`no Callgrind summaries found in ${process.env.CALLGRIND_DIR ?? "<unset>"}`);
@@ -370,12 +400,15 @@ if (criterionRequired && !hasCpu) {
 if (!hasCpu && !hasMemory && callgrindRows.length === 0) {
     throw new Error("no benchmark results found");
 }
+
 const criterionSettings =
     process.env.RUN_CRITERION === "false"
         ? "Criterion disabled"
         : `${process.env.FULL_RELAY_ROUNDS ?? "default"} inbound packets per run, sample size ${
               process.env.SAMPLE_SIZE ?? "criterion default"
-          }, measurement time ${process.env.MEASUREMENT_TIME ?? "criterion default"}s`;
+          }, measurement time ${
+              process.env.MEASUREMENT_TIME ? `${process.env.MEASUREMENT_TIME}s` : "criterion default"
+          }`;
 const sections = [
     `settings: allocator ${process.env.ALLOCATOR ?? "system"}, fanout users ${configuredFanout()}, ${criterionSettings}, ${
         process.env.FULL_RELAY_CALLGRIND_ROUNDS ?? "default"
@@ -383,15 +416,11 @@ const sections = [
 ];
 
 if (hasCpu) {
-    const baseCpu = parseCpu(baseCpuPath, "copied_vec");
-    const arcCpu = parseCpu(arcCpuPath, "shared_arc");
-    sections.push("", cpuTable(baseCpu, arcCpu));
+    sections.push("", cpuTable(parseCpu(cpuPath, "base_vec"), parseCpu(cpuPath, "arc_meta")));
 }
 
 if (hasMemory) {
-    const baseMemory = parseMemory(baseMemoryPath, "copied_vec");
-    const arcMemory = parseMemory(arcMemoryPath, "shared_arc");
-    sections.push("", memoryTable(baseMemory, arcMemory));
+    sections.push("", memoryTable(parseMemory(memoryPath, "base_vec"), parseMemory(memoryPath, "arc_meta")));
 }
 
 if (callgrindRows.length > 0) {

@@ -4,12 +4,16 @@ name = "str0m-benchmarks"
 version = "0.1.0"
 
 [features]
+default = ["meta-type"]
 arc-payload = []
 bytes-payload = ["arc-payload"]
 jemalloc = ["dep:tikv-jemallocator"]
+meta-type = []
+rx-lookup-cleanup = []
+vp8-rewrite = []
 
 [dependencies]
-str0m = { path = "../str0m", default-features = false, features = ["aws-lc-rs"] }
+str0m = { git = "https://github.com/algesten/str0m.git", branch = "meta-type", default-features = false, features = ["aws-lc-rs"] }
 tikv-jemallocator = { version = "0.6.1", optional = true }
 
 [dev-dependencies]
@@ -19,7 +23,34 @@ iai-callgrind = "0.16.1"
 [[bench]]
 harness = false
 name = "fanout"
+required-features = ["meta-type"]
 
 [[bench]]
 harness = false
 name = "full_relay_callgrind"
+required-features = ["meta-type"]
+
+[[bench]]
+harness = false
+name = "vp8_rewrite_callgrind"
+required-features = ["vp8-rewrite"]
+
+[[bench]]
+harness = false
+name = "rx_lookup_cleanup"
+required-features = ["rx-lookup-cleanup"]
+
+[[bench]]
+harness = false
+name = "rx_lookup_cleanup_callgrind"
+required-features = ["rx-lookup-cleanup"]
+
+[[bin]]
+name = "str0m-benchmarks"
+path = "src/main.rs"
+required-features = ["meta-type"]
+
+[[bin]]
+name = "memory"
+path = "src/bin/memory.rs"
+required-features = ["meta-type"]

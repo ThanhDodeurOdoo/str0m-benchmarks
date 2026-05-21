@@ -6,15 +6,11 @@ on:
       str0m_repository:
         description: str0m repository to benchmark
         required: true
-        default: ThanhDodeurOdoo/str0m
-      baseline_ref:
-        description: baseline str0m ref
+        default: algesten/str0m
+      meta_ref:
+        description: meta-type str0m ref
         required: true
-        default: main
-      arc_ref:
-        description: Arc payload str0m ref
-        required: true
-        default: main-arc-rtp-tso
+        default: meta-type
       run_criterion:
         description: run Criterion wall-clock CPU benchmarks
         type: boolean
@@ -93,36 +89,47 @@ jobs:
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           echo "IAI_CALLGRIND_RUNNER=$HOME/.cargo/bin/iai-callgrind-runner" >> "$GITHUB_ENV"
 
-      - name: checkout baseline str0m
+      - name: checkout meta-type str0m
         uses: actions/checkout@v4
         with:
           repository: ${{ inputs.str0m_repository }}
-          ref: ${{ inputs.baseline_ref }}
+          ref: ${{ inputs.meta_ref }}
           path: str0m
           token: ${{ secrets.STR0M_CHECKOUT_TOKEN || github.token }}
 
-      - name: run baseline CPU benchmark
+      - name: use checked-out str0m dependency
+        working-directory: str0m-benchmarks
+        run: |
+          perl -0pi -e 's#^str0m = \{[^\n]*\}#str0m = { path = "../str0m", default-features = false, features = ["aws-lc-rs"] }#m' Cargo.toml
+
+      - name: test benchmark crate
+        working-directory: str0m-benchmarks
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target/meta
+        run: cargo test --features jemalloc
+
+      - name: run meta-type CPU benchmark
         if: ${{ inputs.run_criterion }}
         working-directory: str0m-benchmarks
         env:
-          CARGO_TARGET_DIR: ${{ github.workspace }}/target/base
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target/meta
         run: |
           set -o pipefail
-          cargo bench --features jemalloc --bench fanout 'full_relay_rtp/copied_vec' -- \
+          cargo bench --features jemalloc --bench fanout 'full_relay_rtp' -- \
             --noplot \
             --sample-size "$SAMPLE_SIZE" \
             --measurement-time "$MEASUREMENT_TIME" \
             --warm-up-time "$WARM_UP_TIME" \
-            2>&1 | tee logs/base-cpu.log
+            2>&1 | tee logs/meta-cpu.log
 
-      - name: run baseline allocation benchmark
+      - name: run meta-type allocation benchmark
         if: ${{ inputs.run_memory }}
         working-directory: str0m-benchmarks
         env:
-          CARGO_TARGET_DIR: ${{ github.workspace }}/target/base
-        run: cargo run --release --features jemalloc --bin memory > logs/base-memory.log
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target/meta
+        run: cargo run --release --features jemalloc --bin memory > logs/meta-memory.log
 
-      - name: run baseline Callgrind benchmark
+      - name: run meta-type Callgrind benchmark
         if: ${{ inputs.run_callgrind }}
         working-directory: str0m-benchmarks
         env:
@@ -130,50 +137,8 @@ jobs:
         run: |
           set -o pipefail
           cargo bench --features jemalloc --bench full_relay_callgrind -- \
-            --save-baseline=vec \
             --save-summary=json \
-            2>&1 | tee logs/base-callgrind.log
-
-      - name: checkout Arc payload str0m
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ inputs.str0m_repository }}
-          ref: ${{ inputs.arc_ref }}
-          path: str0m
-          token: ${{ secrets.STR0M_CHECKOUT_TOKEN || github.token }}
-
-      - name: run Arc payload CPU benchmark
-        if: ${{ inputs.run_criterion }}
-        working-directory: str0m-benchmarks
-        env:
-          CARGO_TARGET_DIR: ${{ github.workspace }}/target/arc
-        run: |
-          set -o pipefail
-          cargo bench --features "arc-payload jemalloc" --bench fanout 'full_relay_rtp/shared_arc' -- \
-            --noplot \
-            --sample-size "$SAMPLE_SIZE" \
-            --measurement-time "$MEASUREMENT_TIME" \
-            --warm-up-time "$WARM_UP_TIME" \
-            2>&1 | tee logs/arc-cpu.log
-
-      - name: run Arc payload allocation benchmark
-        if: ${{ inputs.run_memory }}
-        working-directory: str0m-benchmarks
-        env:
-          CARGO_TARGET_DIR: ${{ github.workspace }}/target/arc
-        run: cargo run --release --features "arc-payload jemalloc" --bin memory > logs/arc-memory.log
-
-      - name: run Arc payload Callgrind benchmark
-        if: ${{ inputs.run_callgrind }}
-        working-directory: str0m-benchmarks
-        env:
-          CARGO_TARGET_DIR: ${{ github.workspace }}/target/callgrind
-        run: |
-          set -o pipefail
-          cargo bench --features "arc-payload jemalloc" --bench full_relay_callgrind -- \
-            --baseline=vec \
-            --save-summary=json \
-            2>&1 | tee logs/arc-callgrind.log
+            2>&1 | tee logs/meta-callgrind.log
 
       - name: summarize benchmark
         working-directory: str0m-benchmarks

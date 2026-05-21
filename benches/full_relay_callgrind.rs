@@ -19,12 +19,10 @@ use std::hint::black_box;
 use iai_callgrind::{
     Callgrind, LibraryBenchmarkConfig, library_benchmark, library_benchmark_group, main,
 };
-use str0m_benchmarks::{FullRelayHarness, ReceiveRtpHarness, benchmark_targets, configured_fanout};
-
-#[cfg(feature = "arc-payload")]
-use str0m_benchmarks::BenchPacketShared;
-#[cfg(not(feature = "arc-payload"))]
-use str0m_benchmarks::BenchPacketVec;
+use str0m_benchmarks::{
+    BenchPacketShared, BenchPacketVec, FullRelaySharedHarness, FullRelayVecHarness,
+    ReceiveRtpSharedHarness, ReceiveRtpVecHarness, benchmark_targets, configured_fanout,
+};
 
 #[cfg(feature = "jemalloc")]
 #[global_allocator]
@@ -32,58 +30,75 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 const DEFAULT_CALLGRIND_ROUNDS: usize = 128;
 
-struct ReceiveFanoutFixture {
-    harness: ReceiveRtpHarness,
+struct ReceiveFanoutVecFixture {
+    harness: ReceiveRtpVecHarness,
     targets: Vec<str0m::rtp::Ssrc>,
-    #[cfg(not(feature = "arc-payload"))]
-    out_vec: Vec<BenchPacketVec>,
-    #[cfg(feature = "arc-payload")]
-    out_shared: Vec<BenchPacketShared>,
+    out: Vec<BenchPacketVec>,
 }
 
-struct FullRelayFixture {
-    harness: FullRelayHarness,
+struct ReceiveFanoutSharedFixture {
+    harness: ReceiveRtpSharedHarness,
+    targets: Vec<str0m::rtp::Ssrc>,
+    out: Vec<BenchPacketShared>,
 }
 
-impl ReceiveFanoutFixture {
+struct FullRelayVecFixture {
+    harness: FullRelayVecHarness,
+}
+
+struct FullRelaySharedFixture {
+    harness: FullRelaySharedHarness,
+}
+
+impl ReceiveFanoutVecFixture {
     fn new(fanout: usize, payload_size: usize) -> Self {
         Self {
-            harness: ReceiveRtpHarness::new(payload_size, callgrind_rounds()),
+            harness: ReceiveRtpVecHarness::new(payload_size, callgrind_rounds()),
             targets: benchmark_targets(fanout),
-            #[cfg(not(feature = "arc-payload"))]
-            out_vec: Vec::with_capacity(fanout),
-            #[cfg(feature = "arc-payload")]
-            out_shared: Vec::with_capacity(fanout),
+            out: Vec::with_capacity(fanout),
         }
     }
 
-    #[cfg(not(feature = "arc-payload"))]
-    fn fanout_vec(&mut self) -> usize {
-        self.harness.fanout_vec(&self.targets, &mut self.out_vec)
-    }
-
-    #[cfg(feature = "arc-payload")]
-    fn fanout_shared(&mut self) -> usize {
-        self.harness
-            .fanout_shared(&self.targets, &mut self.out_shared)
+    fn fanout(&mut self) -> usize {
+        self.harness.fanout_vec(&self.targets, &mut self.out)
     }
 }
 
-impl FullRelayFixture {
+impl ReceiveFanoutSharedFixture {
     fn new(fanout: usize, payload_size: usize) -> Self {
         Self {
-            harness: FullRelayHarness::new(fanout, payload_size, callgrind_rounds()),
+            harness: ReceiveRtpSharedHarness::new(payload_size, callgrind_rounds()),
+            targets: benchmark_targets(fanout),
+            out: Vec::with_capacity(fanout),
         }
     }
 
-    #[cfg(feature = "arc-payload")]
-    fn relay_shared(&mut self) -> usize {
-        self.harness.relay_shared()
+    fn fanout(&mut self) -> usize {
+        self.harness.fanout_shared(&self.targets, &mut self.out)
+    }
+}
+
+impl FullRelayVecFixture {
+    fn new(fanout: usize, payload_size: usize) -> Self {
+        Self {
+            harness: FullRelayVecHarness::new(fanout, payload_size, callgrind_rounds()),
+        }
     }
 
-    #[cfg(not(feature = "arc-payload"))]
-    fn relay_vec(&mut self) -> usize {
+    fn relay(&mut self) -> usize {
         self.harness.relay_vec()
+    }
+}
+
+impl FullRelaySharedFixture {
+    fn new(fanout: usize, payload_size: usize) -> Self {
+        Self {
+            harness: FullRelaySharedHarness::new(fanout, payload_size, callgrind_rounds()),
+        }
+    }
+
+    fn relay(&mut self) -> usize {
+        self.harness.relay_shared()
     }
 }
 
@@ -105,87 +120,120 @@ fn callgrind_config() -> LibraryBenchmarkConfig {
     config
 }
 
-macro_rules! receive_setup {
+macro_rules! receive_vec_setup {
     ($name:ident, $fanout:expr, $payload_size:expr) => {
-        fn $name() -> ReceiveFanoutFixture {
-            ReceiveFanoutFixture::new($fanout, $payload_size)
+        fn $name() -> ReceiveFanoutVecFixture {
+            ReceiveFanoutVecFixture::new($fanout, $payload_size)
         }
     };
 }
 
-macro_rules! full_relay_setup {
+macro_rules! receive_shared_setup {
     ($name:ident, $fanout:expr, $payload_size:expr) => {
-        fn $name() -> FullRelayFixture {
-            FullRelayFixture::new($fanout, $payload_size)
+        fn $name() -> ReceiveFanoutSharedFixture {
+            ReceiveFanoutSharedFixture::new($fanout, $payload_size)
         }
     };
 }
 
-receive_setup!(receive_160b_1user, 1, 160);
-receive_setup!(receive_1350b_1user, 1, 1350);
-
-full_relay_setup!(full_relay_160b_1user, 1, 160);
-full_relay_setup!(full_relay_1350b_1user, 1, 1350);
-
-fn receive_160b_configured_users() -> ReceiveFanoutFixture {
-    ReceiveFanoutFixture::new(configured_fanout(), 160)
+macro_rules! full_relay_vec_setup {
+    ($name:ident, $fanout:expr, $payload_size:expr) => {
+        fn $name() -> FullRelayVecFixture {
+            FullRelayVecFixture::new($fanout, $payload_size)
+        }
+    };
 }
 
-fn receive_1350b_configured_users() -> ReceiveFanoutFixture {
-    ReceiveFanoutFixture::new(configured_fanout(), 1350)
+macro_rules! full_relay_shared_setup {
+    ($name:ident, $fanout:expr, $payload_size:expr) => {
+        fn $name() -> FullRelaySharedFixture {
+            FullRelaySharedFixture::new($fanout, $payload_size)
+        }
+    };
 }
 
-fn full_relay_160b_configured_users() -> FullRelayFixture {
-    FullRelayFixture::new(configured_fanout(), 160)
+receive_vec_setup!(receive_vec_160b_1user, 1, 160);
+receive_vec_setup!(receive_vec_1350b_1user, 1, 1350);
+receive_shared_setup!(receive_shared_160b_1user, 1, 160);
+receive_shared_setup!(receive_shared_1350b_1user, 1, 1350);
+
+full_relay_vec_setup!(full_relay_vec_160b_1user, 1, 160);
+full_relay_vec_setup!(full_relay_vec_1350b_1user, 1, 1350);
+full_relay_shared_setup!(full_relay_shared_160b_1user, 1, 160);
+full_relay_shared_setup!(full_relay_shared_1350b_1user, 1, 1350);
+
+fn receive_vec_160b_configured_users() -> ReceiveFanoutVecFixture {
+    ReceiveFanoutVecFixture::new(configured_fanout(), 160)
 }
 
-fn full_relay_1350b_configured_users() -> FullRelayFixture {
-    FullRelayFixture::new(configured_fanout(), 1350)
+fn receive_vec_1350b_configured_users() -> ReceiveFanoutVecFixture {
+    ReceiveFanoutVecFixture::new(configured_fanout(), 1350)
 }
 
-#[cfg(not(feature = "arc-payload"))]
+fn receive_shared_160b_configured_users() -> ReceiveFanoutSharedFixture {
+    ReceiveFanoutSharedFixture::new(configured_fanout(), 160)
+}
+
+fn receive_shared_1350b_configured_users() -> ReceiveFanoutSharedFixture {
+    ReceiveFanoutSharedFixture::new(configured_fanout(), 1350)
+}
+
+fn full_relay_vec_160b_configured_users() -> FullRelayVecFixture {
+    FullRelayVecFixture::new(configured_fanout(), 160)
+}
+
+fn full_relay_vec_1350b_configured_users() -> FullRelayVecFixture {
+    FullRelayVecFixture::new(configured_fanout(), 1350)
+}
+
+fn full_relay_shared_160b_configured_users() -> FullRelaySharedFixture {
+    FullRelaySharedFixture::new(configured_fanout(), 160)
+}
+
+fn full_relay_shared_1350b_configured_users() -> FullRelaySharedFixture {
+    FullRelaySharedFixture::new(configured_fanout(), 1350)
+}
+
 #[library_benchmark(config = callgrind_config())]
-#[bench::p160b_1user(setup = receive_160b_1user)]
-#[bench::p160b_configured_users(setup = receive_160b_configured_users)]
-#[bench::p1350b_1user(setup = receive_1350b_1user)]
-#[bench::p1350b_configured_users(setup = receive_1350b_configured_users)]
-fn rtp_event_fanout(mut fixture: ReceiveFanoutFixture) -> usize {
-    black_box(fixture.fanout_vec())
+#[bench::p160b_1user(setup = receive_vec_160b_1user)]
+#[bench::p160b_configured_users(setup = receive_vec_160b_configured_users)]
+#[bench::p1350b_1user(setup = receive_vec_1350b_1user)]
+#[bench::p1350b_configured_users(setup = receive_vec_1350b_configured_users)]
+fn rtp_event_fanout_base_vec(mut fixture: ReceiveFanoutVecFixture) -> usize {
+    black_box(fixture.fanout())
 }
 
-#[cfg(feature = "arc-payload")]
 #[library_benchmark(config = callgrind_config())]
-#[bench::p160b_1user(setup = receive_160b_1user)]
-#[bench::p160b_configured_users(setup = receive_160b_configured_users)]
-#[bench::p1350b_1user(setup = receive_1350b_1user)]
-#[bench::p1350b_configured_users(setup = receive_1350b_configured_users)]
-fn rtp_event_fanout(mut fixture: ReceiveFanoutFixture) -> usize {
-    black_box(fixture.fanout_shared())
+#[bench::p160b_1user(setup = receive_shared_160b_1user)]
+#[bench::p160b_configured_users(setup = receive_shared_160b_configured_users)]
+#[bench::p1350b_1user(setup = receive_shared_1350b_1user)]
+#[bench::p1350b_configured_users(setup = receive_shared_1350b_configured_users)]
+fn rtp_event_fanout_arc_meta(mut fixture: ReceiveFanoutSharedFixture) -> usize {
+    black_box(fixture.fanout())
 }
 
-#[cfg(not(feature = "arc-payload"))]
 #[library_benchmark(config = callgrind_config())]
-#[bench::p160b_1user(setup = full_relay_160b_1user)]
-#[bench::p160b_configured_users(setup = full_relay_160b_configured_users)]
-#[bench::p1350b_1user(setup = full_relay_1350b_1user)]
-#[bench::p1350b_configured_users(setup = full_relay_1350b_configured_users)]
-fn full_relay(mut fixture: FullRelayFixture) -> usize {
-    black_box(fixture.relay_vec())
+#[bench::p160b_1user(setup = full_relay_vec_160b_1user)]
+#[bench::p160b_configured_users(setup = full_relay_vec_160b_configured_users)]
+#[bench::p1350b_1user(setup = full_relay_vec_1350b_1user)]
+#[bench::p1350b_configured_users(setup = full_relay_vec_1350b_configured_users)]
+fn full_relay_base_vec(mut fixture: FullRelayVecFixture) -> usize {
+    black_box(fixture.relay())
 }
 
-#[cfg(feature = "arc-payload")]
 #[library_benchmark(config = callgrind_config())]
-#[bench::p160b_1user(setup = full_relay_160b_1user)]
-#[bench::p160b_configured_users(setup = full_relay_160b_configured_users)]
-#[bench::p1350b_1user(setup = full_relay_1350b_1user)]
-#[bench::p1350b_configured_users(setup = full_relay_1350b_configured_users)]
-fn full_relay(mut fixture: FullRelayFixture) -> usize {
-    black_box(fixture.relay_shared())
+#[bench::p160b_1user(setup = full_relay_shared_160b_1user)]
+#[bench::p160b_configured_users(setup = full_relay_shared_160b_configured_users)]
+#[bench::p1350b_1user(setup = full_relay_shared_1350b_1user)]
+#[bench::p1350b_configured_users(setup = full_relay_shared_1350b_configured_users)]
+fn full_relay_arc_meta(mut fixture: FullRelaySharedFixture) -> usize {
+    black_box(fixture.relay())
 }
 
 library_benchmark_group!(
     name = relay_callgrind;
-    benchmarks = rtp_event_fanout, full_relay
+    benchmarks = rtp_event_fanout_base_vec, rtp_event_fanout_arc_meta, full_relay_base_vec,
+        full_relay_arc_meta
 );
 
 main!(library_benchmark_groups = relay_callgrind);
