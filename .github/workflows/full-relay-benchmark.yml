@@ -1,0 +1,197 @@
+name: full relay benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      str0m_repository:
+        description: str0m repository to benchmark
+        required: true
+        default: ThanhDodeurOdoo/str0m
+      baseline_ref:
+        description: baseline str0m ref
+        required: true
+        default: main
+      arc_ref:
+        description: Arc payload str0m ref
+        required: true
+        default: main-arc-rtp-tso
+      run_criterion:
+        description: run Criterion wall-clock CPU benchmarks
+        type: boolean
+        required: true
+        default: true
+      fanout_users:
+        description: users for the configurable fanout scenario
+        required: true
+        default: "30"
+      relay_rounds:
+        description: inbound RTP packets per Criterion iteration
+        required: true
+        default: "500"
+      sample_size:
+        description: Criterion sample size
+        required: true
+        default: "50"
+      measurement_time:
+        description: Criterion measurement time in seconds
+        required: true
+        default: "60"
+      warm_up_time:
+        description: Criterion warm-up time in seconds
+        required: true
+        default: "2"
+      run_callgrind:
+        description: also run iai-callgrind instruction benchmarks
+        type: boolean
+        required: true
+        default: true
+      callgrind_rounds:
+        description: inbound RTP packets per Callgrind benchmark
+        required: true
+        default: "500"
+      run_memory:
+        description: also run allocation counters
+        type: boolean
+        required: true
+        default: true
+
+jobs:
+  full-relay-benchmark:
+    name: full relay benchmark
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+
+    env:
+      FULL_RELAY_ROUNDS: ${{ inputs.relay_rounds }}
+      FULL_RELAY_CALLGRIND_ROUNDS: ${{ inputs.callgrind_rounds }}
+      SAMPLE_SIZE: ${{ inputs.sample_size }}
+      MEASUREMENT_TIME: ${{ inputs.measurement_time }}
+      WARM_UP_TIME: ${{ inputs.warm_up_time }}
+      ALLOCATOR: jemalloc
+      RUN_CRITERION: ${{ inputs.run_criterion }}
+      FANOUT_USERS: ${{ inputs.fanout_users }}
+
+    steps:
+      - name: checkout benchmark repo
+        uses: actions/checkout@v4
+        with:
+          path: str0m-benchmarks
+
+      - name: install rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: prepare benchmark logs
+        working-directory: str0m-benchmarks
+        run: mkdir -p logs
+
+      - name: install Callgrind tools
+        if: ${{ inputs.run_callgrind }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y valgrind
+          cargo install iai-callgrind-runner --version 0.16.1 --locked
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          echo "IAI_CALLGRIND_RUNNER=$HOME/.cargo/bin/iai-callgrind-runner" >> "$GITHUB_ENV"
+
+      - name: checkout baseline str0m
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.str0m_repository }}
+          ref: ${{ inputs.baseline_ref }}
+          path: str0m
+          token: ${{ secrets.STR0M_CHECKOUT_TOKEN || github.token }}
+
+      - name: run baseline CPU benchmark
+        if: ${{ inputs.run_criterion }}
+        working-directory: str0m-benchmarks
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target/base
+        run: |
+          set -o pipefail
+          cargo bench --features jemalloc --bench fanout 'full_relay_rtp/copied_vec' -- \
+            --noplot \
+            --sample-size "$SAMPLE_SIZE" \
+            --measurement-time "$MEASUREMENT_TIME" \
+            --warm-up-time "$WARM_UP_TIME" \
+            2>&1 | tee logs/base-cpu.log
+
+      - name: run baseline allocation benchmark
+        if: ${{ inputs.run_memory }}
+        working-directory: str0m-benchmarks
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target/base
+        run: cargo run --release --features jemalloc --bin memory > logs/base-memory.log
+
+      - name: run baseline Callgrind benchmark
+        if: ${{ inputs.run_callgrind }}
+        working-directory: str0m-benchmarks
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target/callgrind
+        run: |
+          set -o pipefail
+          cargo bench --features jemalloc --bench full_relay_callgrind -- \
+            --save-baseline=vec \
+            --save-summary=json \
+            2>&1 | tee logs/base-callgrind.log
+
+      - name: checkout Arc payload str0m
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.str0m_repository }}
+          ref: ${{ inputs.arc_ref }}
+          path: str0m
+          token: ${{ secrets.STR0M_CHECKOUT_TOKEN || github.token }}
+
+      - name: run Arc payload CPU benchmark
+        if: ${{ inputs.run_criterion }}
+        working-directory: str0m-benchmarks
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target/arc
+        run: |
+          set -o pipefail
+          cargo bench --features "arc-payload jemalloc" --bench fanout 'full_relay_rtp/shared_arc' -- \
+            --noplot \
+            --sample-size "$SAMPLE_SIZE" \
+            --measurement-time "$MEASUREMENT_TIME" \
+            --warm-up-time "$WARM_UP_TIME" \
+            2>&1 | tee logs/arc-cpu.log
+
+      - name: run Arc payload allocation benchmark
+        if: ${{ inputs.run_memory }}
+        working-directory: str0m-benchmarks
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target/arc
+        run: cargo run --release --features "arc-payload jemalloc" --bin memory > logs/arc-memory.log
+
+      - name: run Arc payload Callgrind benchmark
+        if: ${{ inputs.run_callgrind }}
+        working-directory: str0m-benchmarks
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target/callgrind
+        run: |
+          set -o pipefail
+          cargo bench --features "arc-payload jemalloc" --bench full_relay_callgrind -- \
+            --baseline=vec \
+            --save-summary=json \
+            2>&1 | tee logs/arc-callgrind.log
+
+      - name: summarize benchmark
+        working-directory: str0m-benchmarks
+        env:
+          CALLGRIND_DIR: ${{ github.workspace }}/target/callgrind/iai
+          CALLGRIND_REQUIRED: ${{ inputs.run_callgrind }}
+          CRITERION_REQUIRED: ${{ inputs.run_criterion }}
+        run: |
+          set -o pipefail
+          node scripts/summarize_full_relay.mjs | tee logs/summary.md
+          cat logs/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: upload benchmark logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-relay-benchmark
+          path: |
+            str0m-benchmarks/logs/
+            target/callgrind/iai/
+          if-no-files-found: ignore

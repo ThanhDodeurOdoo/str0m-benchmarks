@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::env;
 use std::net::{Ipv4Addr, SocketAddr};
 #[cfg(feature = "arc-payload")]
 use std::sync::Arc;
@@ -10,6 +11,8 @@ use str0m::media::{MediaKind, Pt};
 use str0m::net::{Protocol, Receive};
 use str0m::rtp::{ExtensionValues, Ssrc};
 use str0m::{Candidate, Event, Input, Output, Rtc};
+
+const DEFAULT_CONFIGURED_FANOUT: usize = 30;
 
 #[cfg(feature = "arc-payload")]
 pub type SharedPayload = Arc<[u8]>;
@@ -37,6 +40,23 @@ pub fn benchmark_targets(fanout: usize) -> Vec<Ssrc> {
     (0..fanout)
         .map(|idx| (10_000 + idx as u32).into())
         .collect()
+}
+
+pub fn configured_fanout() -> usize {
+    env::var("FANOUT_USERS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .filter(|fanout| *fanout > 0)
+        .unwrap_or(DEFAULT_CONFIGURED_FANOUT)
+}
+
+pub fn benchmark_fanouts() -> Vec<usize> {
+    let configured = configured_fanout();
+    if configured == 1 {
+        vec![1]
+    } else {
+        vec![1, configured]
+    }
 }
 
 pub fn make_payload(size: usize) -> Vec<u8> {

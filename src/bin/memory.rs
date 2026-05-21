@@ -1,24 +1,22 @@
-use std::alloc::{GlobalAlloc, Layout, System};
+#[cfg(not(feature = "jemalloc"))]
+use std::alloc::System;
+use std::alloc::{GlobalAlloc, Layout};
+use std::env;
 use std::hint::black_box;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use str0m_benchmarks::{
     EnqueueHarness, FullEgressHarness, FullRelayHarness, ReceiveMediaHarness, ReceiveRtpHarness,
-    benchmark_targets, forward_vec, make_payload, packet_template_vec,
+    benchmark_fanouts, benchmark_targets, forward_vec, make_payload, packet_template_vec,
 };
 
 #[cfg(feature = "arc-payload")]
 use str0m_benchmarks::{forward_shared, packet_template_shared, shared_payload};
 
-const FANOUTS: &[usize] = &[1, 2, 10, 50];
 const PAYLOAD_SCENARIOS: &[PayloadScenario] = &[
     PayloadScenario {
         label: "audio-160B",
         size: 160,
-    },
-    PayloadScenario {
-        label: "video-1200B",
-        size: 1200,
     },
     PayloadScenario {
         label: "video-1350B",
@@ -27,11 +25,16 @@ const PAYLOAD_SCENARIOS: &[PayloadScenario] = &[
 ];
 const ENQUEUE_ROUNDS: usize = 64;
 const FULL_EGRESS_ROUNDS: usize = 64;
-const FULL_RELAY_ROUNDS: usize = 64;
+const DEFAULT_FULL_RELAY_ROUNDS: usize = 64;
 const RECEIVE_ROUNDS: usize = 64;
 
 #[global_allocator]
 static GLOBAL: CountingAllocator = CountingAllocator;
+
+#[cfg(feature = "jemalloc")]
+static INNER_ALLOCATOR: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+#[cfg(not(feature = "jemalloc"))]
+static INNER_ALLOCATOR: System = System;
 
 static ALLOC_CALLS: AtomicU64 = AtomicU64::new(0);
 static DEALLOC_CALLS: AtomicU64 = AtomicU64::new(0);
@@ -55,21 +58,22 @@ struct AllocationStats {
     deallocated_bytes: u64,
 }
 
-// SAFETY: this allocator delegates every request to `System` with the original
-// pointer and layout. The counters are side effects that do not affect ownership.
+// SAFETY: this allocator delegates every request to the selected allocator with
+// the original pointer and layout. The counters are side effects that do not
+// affect ownership.
 unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         ALLOC_CALLS.fetch_add(1, Ordering::Relaxed);
         ALLOCATED_BYTES.fetch_add(layout.size() as u64, Ordering::Relaxed);
-        // SAFETY: the request is forwarded unchanged to the system allocator.
-        unsafe { System.alloc(layout) }
+        // SAFETY: the request is forwarded unchanged to the selected allocator.
+        unsafe { INNER_ALLOCATOR.alloc(layout) }
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         DEALLOC_CALLS.fetch_add(1, Ordering::Relaxed);
         DEALLOCATED_BYTES.fetch_add(layout.size() as u64, Ordering::Relaxed);
         // SAFETY: the pointer and layout come from the allocator contract.
-        unsafe { System.dealloc(ptr, layout) }
+        unsafe { INNER_ALLOCATOR.dealloc(ptr, layout) }
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
@@ -77,28 +81,39 @@ unsafe impl GlobalAlloc for CountingAllocator {
         DEALLOCATED_BYTES.fetch_add(layout.size() as u64, Ordering::Relaxed);
         ALLOCATED_BYTES.fetch_add(new_size as u64, Ordering::Relaxed);
         // SAFETY: the pointer, layout and new size are forwarded unchanged.
-        unsafe { System.realloc(ptr, layout, new_size) }
+        unsafe { INNER_ALLOCATOR.realloc(ptr, layout, new_size) }
     }
 }
 
 fn main() {
+    let fanouts = benchmark_fanouts();
+    let full_relay_rounds = full_relay_rounds();
+
     println!(
         "| group | scenario | variant | packets | alloc calls | dealloc calls | realloc calls | allocated bytes | retained bytes | bytes/packet |"
     );
     println!("|---|---|---|---:|---:|---:|---:|---:|---:|---:|");
 
     for scenario in PAYLOAD_SCENARIOS {
-        for &fanout in FANOUTS {
+        for &fanout in &fanouts {
             print_packet_fanout(scenario, fanout);
             print_enqueue(scenario, fanout);
             print_full_egress(scenario, fanout);
-            print_full_relay_rtp(scenario, fanout);
+            print_full_relay_rtp(scenario, fanout, full_relay_rounds);
             print_receive_rtp_fanout(scenario, fanout);
             print_receive_media_fanout(scenario, fanout);
         }
         print_receive_rtp_event(scenario);
         print_receive_media_event(scenario);
     }
+}
+
+fn full_relay_rounds() -> usize {
+    env::var("FULL_RELAY_ROUNDS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .filter(|rounds| *rounds > 0)
+        .unwrap_or(DEFAULT_FULL_RELAY_ROUNDS)
 }
 
 fn print_packet_fanout(scenario: &PayloadScenario, fanout: usize) {
@@ -212,8 +227,8 @@ fn print_full_egress(scenario: &PayloadScenario, fanout: usize) {
     }
 }
 
-fn print_full_relay_rtp(scenario: &PayloadScenario, fanout: usize) {
-    let mut harness = FullRelayHarness::new(fanout, scenario.size, FULL_RELAY_ROUNDS);
+fn print_full_relay_rtp(scenario: &PayloadScenario, fanout: usize, full_relay_rounds: usize) {
+    let mut harness = FullRelayHarness::new(fanout, scenario.size, full_relay_rounds);
     let stats = measure_allocations(|| {
         let transmit_count = harness.relay_vec();
         black_box(transmit_count);
@@ -223,13 +238,13 @@ fn print_full_relay_rtp(scenario: &PayloadScenario, fanout: usize) {
         scenario,
         fanout,
         "copied_vec",
-        fanout * FULL_RELAY_ROUNDS,
+        fanout * full_relay_rounds,
         stats,
     );
 
     #[cfg(feature = "arc-payload")]
     {
-        let mut harness = FullRelayHarness::new(fanout, scenario.size, FULL_RELAY_ROUNDS);
+        let mut harness = FullRelayHarness::new(fanout, scenario.size, full_relay_rounds);
         let stats = measure_allocations(|| {
             let transmit_count = harness.relay_shared();
             black_box(transmit_count);
@@ -239,7 +254,7 @@ fn print_full_relay_rtp(scenario: &PayloadScenario, fanout: usize) {
             scenario,
             fanout,
             "shared_arc",
-            fanout * FULL_RELAY_ROUNDS,
+            fanout * full_relay_rounds,
             stats,
         );
     }
