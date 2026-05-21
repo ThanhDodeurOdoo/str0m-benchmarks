@@ -4,12 +4,11 @@ use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use str0m_benchmarks::{
-    EnqueueHarness, FullEgressHarness, FullRelayHarness, ReceiveMediaHarness, ReceiveRtpHarness,
-    benchmark_fanouts, forward_vec, packet_template_vec,
+    EnqueueSharedHarness, EnqueueVecHarness, FullEgressSharedHarness, FullEgressVecHarness,
+    FullRelaySharedHarness, FullRelayVecHarness, ReceiveMediaSharedHarness, ReceiveMediaVecHarness,
+    ReceiveRtpSharedHarness, ReceiveRtpVecHarness, benchmark_fanouts, forward_shared, forward_vec,
+    packet_template_shared, packet_template_vec, shared_payload,
 };
-
-#[cfg(feature = "arc-payload")]
-use str0m_benchmarks::{forward_shared, packet_template_shared, shared_payload};
 
 #[cfg(feature = "jemalloc")]
 #[global_allocator]
@@ -60,7 +59,7 @@ fn bench_packet_fanout(c: &mut Criterion) {
 
             group.throughput(throughput);
             group.bench_with_input(
-                BenchmarkId::new("copied_vec", format!("{}-{fanout}dst", scenario.label)),
+                BenchmarkId::new("base_vec", format!("{}-{fanout}dst", scenario.label)),
                 &(payload_size, fanout),
                 |b, _| {
                     let mut out = Vec::with_capacity(fanout);
@@ -70,11 +69,9 @@ fn bench_packet_fanout(c: &mut Criterion) {
                     });
                 },
             );
-            #[cfg(feature = "arc-payload")]
             let shared_template = packet_template_shared(payload_size);
-            #[cfg(feature = "arc-payload")]
             group.bench_with_input(
-                BenchmarkId::new("shared_arc", format!("{}-{fanout}dst", scenario.label)),
+                BenchmarkId::new("arc_meta", format!("{}-{fanout}dst", scenario.label)),
                 &(payload_size, fanout),
                 |b, _| {
                     let mut out = Vec::with_capacity(fanout);
@@ -102,11 +99,11 @@ fn bench_enqueue(c: &mut Criterion) {
 
             group.throughput(throughput);
             group.bench_with_input(
-                BenchmarkId::new("copied_vec", format!("{}-{fanout}dst", scenario.label)),
+                BenchmarkId::new("base_vec", format!("{}-{fanout}dst", scenario.label)),
                 &(payload_size, fanout),
                 |b, _| {
                     b.iter_batched(
-                        || EnqueueHarness::new(fanout),
+                        || EnqueueVecHarness::new(fanout),
                         |mut harness| {
                             harness.enqueue_vec(black_box(&payload_vec), ENQUEUE_ROUNDS);
                             black_box(harness);
@@ -115,17 +112,15 @@ fn bench_enqueue(c: &mut Criterion) {
                     );
                 },
             );
-            #[cfg(feature = "arc-payload")]
             let payload_shared = shared_payload(payload_size);
-            #[cfg(feature = "arc-payload")]
             group.bench_with_input(
-                BenchmarkId::new("shared_arc", format!("{}-{fanout}dst", scenario.label)),
+                BenchmarkId::new("arc_meta", format!("{}-{fanout}dst", scenario.label)),
                 &(payload_size, fanout),
                 |b, _| {
                     b.iter_batched(
-                        || EnqueueHarness::new(fanout),
+                        || EnqueueSharedHarness::new(fanout),
                         |mut harness| {
-                            harness.enqueue_bytes(black_box(&payload_shared), ENQUEUE_ROUNDS);
+                            harness.enqueue_shared(black_box(&payload_shared), ENQUEUE_ROUNDS);
                             black_box(harness);
                         },
                         criterion::BatchSize::SmallInput,
@@ -150,11 +145,11 @@ fn bench_full_egress(c: &mut Criterion) {
 
             group.throughput(throughput);
             group.bench_with_input(
-                BenchmarkId::new("copied_vec", format!("{}-{fanout}dst", scenario.label)),
+                BenchmarkId::new("base_vec", format!("{}-{fanout}dst", scenario.label)),
                 &(payload_size, fanout),
                 |b, _| {
                     b.iter_batched(
-                        || FullEgressHarness::new(fanout),
+                        || FullEgressVecHarness::new(fanout),
                         |mut harness| {
                             let transmit_count =
                                 harness.egress_vec(black_box(&payload_vec), FULL_EGRESS_ROUNDS);
@@ -164,18 +159,16 @@ fn bench_full_egress(c: &mut Criterion) {
                     );
                 },
             );
-            #[cfg(feature = "arc-payload")]
             let payload_shared = shared_payload(payload_size);
-            #[cfg(feature = "arc-payload")]
             group.bench_with_input(
-                BenchmarkId::new("shared_arc", format!("{}-{fanout}dst", scenario.label)),
+                BenchmarkId::new("arc_meta", format!("{}-{fanout}dst", scenario.label)),
                 &(payload_size, fanout),
                 |b, _| {
                     b.iter_batched(
-                        || FullEgressHarness::new(fanout),
+                        || FullEgressSharedHarness::new(fanout),
                         |mut harness| {
                             let transmit_count = harness
-                                .egress_bytes(black_box(&payload_shared), FULL_EGRESS_ROUNDS);
+                                .egress_shared(black_box(&payload_shared), FULL_EGRESS_ROUNDS);
                             black_box(transmit_count);
                         },
                         criterion::BatchSize::SmallInput,
@@ -200,11 +193,11 @@ fn bench_full_relay_rtp(c: &mut Criterion) {
 
             group.throughput(throughput);
             group.bench_with_input(
-                BenchmarkId::new("copied_vec", format!("{}-{fanout}dst", scenario.label)),
+                BenchmarkId::new("base_vec", format!("{}-{fanout}dst", scenario.label)),
                 &(payload_size, fanout),
                 |b, _| {
                     b.iter_batched(
-                        || FullRelayHarness::new(fanout, payload_size, full_relay_rounds),
+                        || FullRelayVecHarness::new(fanout, payload_size, full_relay_rounds),
                         |mut harness| {
                             let transmit_count = harness.relay_vec();
                             black_box(transmit_count);
@@ -214,13 +207,12 @@ fn bench_full_relay_rtp(c: &mut Criterion) {
                 },
             );
 
-            #[cfg(feature = "arc-payload")]
             group.bench_with_input(
-                BenchmarkId::new("shared_arc", format!("{}-{fanout}dst", scenario.label)),
+                BenchmarkId::new("arc_meta", format!("{}-{fanout}dst", scenario.label)),
                 &(payload_size, fanout),
                 |b, _| {
                     b.iter_batched(
-                        || FullRelayHarness::new(fanout, payload_size, full_relay_rounds),
+                        || FullRelaySharedHarness::new(fanout, payload_size, full_relay_rounds),
                         |mut harness| {
                             let transmit_count = harness.relay_shared();
                             black_box(transmit_count);
@@ -244,11 +236,25 @@ fn bench_receive_rtp_event(c: &mut Criterion) {
 
         group.throughput(throughput);
         group.bench_with_input(
-            BenchmarkId::new("event_only", scenario.label),
+            BenchmarkId::new("base_vec", scenario.label),
             &payload_size,
             |b, _| {
                 b.iter_batched(
-                    || ReceiveRtpHarness::new(payload_size, RECEIVE_ROUNDS),
+                    || ReceiveRtpVecHarness::new(payload_size, RECEIVE_ROUNDS),
+                    |mut harness| {
+                        let payload_bytes = harness.receive_events();
+                        black_box(payload_bytes);
+                    },
+                    criterion::BatchSize::SmallInput,
+                );
+            },
+        );
+        group.bench_with_input(
+            BenchmarkId::new("arc_meta", scenario.label),
+            &payload_size,
+            |b, _| {
+                b.iter_batched(
+                    || ReceiveRtpSharedHarness::new(payload_size, RECEIVE_ROUNDS),
                     |mut harness| {
                         let payload_bytes = harness.receive_events();
                         black_box(payload_bytes);
@@ -274,11 +280,11 @@ fn bench_receive_rtp_fanout(c: &mut Criterion) {
 
             group.throughput(throughput);
             group.bench_with_input(
-                BenchmarkId::new("copied_vec", format!("{}-{fanout}dst", scenario.label)),
+                BenchmarkId::new("base_vec", format!("{}-{fanout}dst", scenario.label)),
                 &(payload_size, fanout),
                 |b, _| {
                     b.iter_batched(
-                        || ReceiveRtpHarness::new(payload_size, RECEIVE_ROUNDS),
+                        || ReceiveRtpVecHarness::new(payload_size, RECEIVE_ROUNDS),
                         |mut harness| {
                             let mut out = Vec::with_capacity(fanout);
                             let forwarded = harness.fanout_vec(black_box(&targets), &mut out);
@@ -290,13 +296,12 @@ fn bench_receive_rtp_fanout(c: &mut Criterion) {
                 },
             );
 
-            #[cfg(feature = "arc-payload")]
             group.bench_with_input(
-                BenchmarkId::new("shared_arc", format!("{}-{fanout}dst", scenario.label)),
+                BenchmarkId::new("arc_meta", format!("{}-{fanout}dst", scenario.label)),
                 &(payload_size, fanout),
                 |b, _| {
                     b.iter_batched(
-                        || ReceiveRtpHarness::new(payload_size, RECEIVE_ROUNDS),
+                        || ReceiveRtpSharedHarness::new(payload_size, RECEIVE_ROUNDS),
                         |mut harness| {
                             let mut out = Vec::with_capacity(fanout);
                             let forwarded = harness.fanout_shared(black_box(&targets), &mut out);
@@ -322,11 +327,25 @@ fn bench_receive_media_event(c: &mut Criterion) {
 
         group.throughput(throughput);
         group.bench_with_input(
-            BenchmarkId::new("event_only", scenario.label),
+            BenchmarkId::new("base_vec", scenario.label),
             &payload_size,
             |b, _| {
                 b.iter_batched(
-                    || ReceiveMediaHarness::new(payload_size, RECEIVE_ROUNDS),
+                    || ReceiveMediaVecHarness::new(payload_size, RECEIVE_ROUNDS),
+                    |mut harness| {
+                        let payload_bytes = harness.receive_events();
+                        black_box(payload_bytes);
+                    },
+                    criterion::BatchSize::SmallInput,
+                );
+            },
+        );
+        group.bench_with_input(
+            BenchmarkId::new("arc_meta", scenario.label),
+            &payload_size,
+            |b, _| {
+                b.iter_batched(
+                    || ReceiveMediaSharedHarness::new(payload_size, RECEIVE_ROUNDS),
                     |mut harness| {
                         let payload_bytes = harness.receive_events();
                         black_box(payload_bytes);
@@ -352,11 +371,11 @@ fn bench_receive_media_fanout(c: &mut Criterion) {
 
             group.throughput(throughput);
             group.bench_with_input(
-                BenchmarkId::new("copied_vec", format!("{}-{fanout}dst", scenario.label)),
+                BenchmarkId::new("base_vec", format!("{}-{fanout}dst", scenario.label)),
                 &(payload_size, fanout),
                 |b, _| {
                     b.iter_batched(
-                        || ReceiveMediaHarness::new(payload_size, RECEIVE_ROUNDS),
+                        || ReceiveMediaVecHarness::new(payload_size, RECEIVE_ROUNDS),
                         |mut harness| {
                             let mut out = Vec::with_capacity(fanout);
                             let forwarded = harness.fanout_vec(black_box(&targets), &mut out);
@@ -368,13 +387,12 @@ fn bench_receive_media_fanout(c: &mut Criterion) {
                 },
             );
 
-            #[cfg(feature = "arc-payload")]
             group.bench_with_input(
-                BenchmarkId::new("shared_arc", format!("{}-{fanout}dst", scenario.label)),
+                BenchmarkId::new("arc_meta", format!("{}-{fanout}dst", scenario.label)),
                 &(payload_size, fanout),
                 |b, _| {
                     b.iter_batched(
-                        || ReceiveMediaHarness::new(payload_size, RECEIVE_ROUNDS),
+                        || ReceiveMediaSharedHarness::new(payload_size, RECEIVE_ROUNDS),
                         |mut harness| {
                             let mut out = Vec::with_capacity(fanout);
                             let forwarded = harness.fanout_shared(black_box(&targets), &mut out);

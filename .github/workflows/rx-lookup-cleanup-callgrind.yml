@@ -1,0 +1,130 @@
+name: rx lookup cleanup callgrind
+
+on:
+  workflow_dispatch:
+    inputs:
+      before_repository:
+        description: baseline str0m repository
+        required: true
+        default: ThanhDodeurOdoo/str0m
+      before_ref:
+        description: baseline str0m ref
+        required: true
+        default: main
+      apply_cleanup_fix:
+        description: apply the cleanup timestamp fix to the after checkout
+        type: boolean
+        required: true
+        default: true
+      after_repository:
+        description: fixed str0m repository when apply_cleanup_fix is false
+        required: true
+        default: ThanhDodeurOdoo/str0m
+      after_ref:
+        description: fixed str0m ref when apply_cleanup_fix is false
+        required: true
+        default: fix-rx-lookup-cleanup
+      lookup_streams:
+        description: RTP-mode receive streams to seed
+        required: true
+        default: "512"
+      measured_packets:
+        description: packets received per Callgrind benchmark
+        required: true
+        default: "256"
+
+jobs:
+  rx-lookup-cleanup-callgrind:
+    name: rx lookup cleanup callgrind
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+
+    env:
+      RX_LOOKUP_STREAMS: ${{ inputs.lookup_streams }}
+      RX_LOOKUP_PACKETS: ${{ inputs.measured_packets }}
+      RESULT_DIR: logs/rx-lookup-cleanup-callgrind
+
+    steps:
+      - name: checkout benchmark repo
+        uses: actions/checkout@v4
+        with:
+          path: str0m-benchmarks
+
+      - name: install rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: install Callgrind tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rsync valgrind
+          cargo install iai-callgrind-runner --version 0.16.1 --locked
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          echo "IAI_CALLGRIND_RUNNER=$HOME/.cargo/bin/iai-callgrind-runner" >> "$GITHUB_ENV"
+
+      - name: checkout baseline str0m
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.before_repository }}
+          ref: ${{ inputs.before_ref }}
+          path: str0m-before
+          token: ${{ secrets.STR0M_CHECKOUT_TOKEN || github.token }}
+
+      - name: checkout fixed str0m
+        if: ${{ !inputs.apply_cleanup_fix }}
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.after_repository }}
+          ref: ${{ inputs.after_ref }}
+          path: str0m-after
+          token: ${{ secrets.STR0M_CHECKOUT_TOKEN || github.token }}
+
+      - name: checkout patched baseline str0m
+        if: ${{ inputs.apply_cleanup_fix }}
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.before_repository }}
+          ref: ${{ inputs.before_ref }}
+          path: str0m-after
+          token: ${{ secrets.STR0M_CHECKOUT_TOKEN || github.token }}
+
+      - name: apply rx lookup cleanup fix
+        if: ${{ inputs.apply_cleanup_fix }}
+        working-directory: str0m-after
+        run: |
+          if ! grep -q 'self.last_rx_lookup_cleanup = now;' src/streams/mod.rs; then
+            perl -0pi -e 's#(self\.rx_lookup\n\s+\.retain\(\|_, l\| now - l\.last_used <= RX_LOOKUP_EXPIRY\);\n)(\s+})#$1            self.last_rx_lookup_cleanup = now;\n$2#' src/streams/mod.rs
+          fi
+          grep -q 'self.last_rx_lookup_cleanup = now;' src/streams/mod.rs
+
+      - name: show tool versions
+        working-directory: str0m-benchmarks
+        run: |
+          rustc --version
+          cargo --version
+          valgrind --version
+          iai-callgrind-runner --version
+
+      - name: run rx lookup cleanup Callgrind comparison
+        working-directory: str0m-benchmarks
+        run: |
+          set -o pipefail
+          scripts/run-rx-lookup-cleanup-callgrind.sh ../str0m-before ../str0m-after "$RESULT_DIR"
+
+      - name: summarize Callgrind comparison
+        working-directory: str0m-benchmarks
+        run: |
+          set -o pipefail
+          node scripts/summarize_rx_lookup_callgrind.mjs \
+            "$RESULT_DIR/before-callgrind-target/iai" \
+            "$RESULT_DIR/after-callgrind-target/iai" \
+            | tee "$RESULT_DIR/summary.md"
+          cat "$RESULT_DIR/summary.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: upload Callgrind artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rx-lookup-cleanup-callgrind
+          path: |
+            str0m-benchmarks/logs/rx-lookup-cleanup-callgrind/
+          if-no-files-found: ignore
