@@ -6,12 +6,12 @@ use std::hint::black_box;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use str0m_benchmarks::{
-    EnqueueHarness, FullEgressHarness, FullRelayHarness, ReceiveMediaHarness, ReceiveRtpHarness,
-    benchmark_fanouts, benchmark_targets, forward_vec, make_payload, packet_template_vec,
+    EnqueueSharedHarness, EnqueueVecHarness, FullEgressSharedHarness, FullEgressVecHarness,
+    FullRelaySharedHarness, FullRelayVecHarness, ReceiveMediaSharedHarness, ReceiveMediaVecHarness,
+    ReceiveRtpSharedHarness, ReceiveRtpVecHarness, benchmark_fanouts, benchmark_targets,
+    forward_shared, forward_vec, make_payload, packet_template_shared, packet_template_vec,
+    shared_payload,
 };
-
-#[cfg(feature = "arc-payload")]
-use str0m_benchmarks::{forward_shared, packet_template_shared, shared_payload};
 
 const PAYLOAD_SCENARIOS: &[PayloadScenario] = &[
     PayloadScenario {
@@ -124,41 +124,24 @@ fn print_packet_fanout(scenario: &PayloadScenario, fanout: usize) {
         forward_vec(black_box(&vec_template), black_box(&targets), &mut vec_out);
         black_box(&vec_out);
     });
-    print_row(
-        "packet_fanout",
-        scenario,
-        fanout,
-        "copied_vec",
-        fanout,
-        stats,
-    );
+    print_row("packet_fanout", scenario, fanout, "base_vec", fanout, stats);
 
-    #[cfg(feature = "arc-payload")]
-    {
-        let mut shared_out = Vec::with_capacity(fanout);
-        let shared_template = packet_template_shared(scenario.size);
-        let stats = measure_allocations(|| {
-            forward_shared(
-                black_box(&shared_template),
-                black_box(&targets),
-                &mut shared_out,
-            );
-            black_box(&shared_out);
-        });
-        print_row(
-            "packet_fanout",
-            scenario,
-            fanout,
-            "shared_arc",
-            fanout,
-            stats,
+    let mut shared_out = Vec::with_capacity(fanout);
+    let shared_template = packet_template_shared(scenario.size);
+    let stats = measure_allocations(|| {
+        forward_shared(
+            black_box(&shared_template),
+            black_box(&targets),
+            &mut shared_out,
         );
-    }
+        black_box(&shared_out);
+    });
+    print_row("packet_fanout", scenario, fanout, "arc_meta", fanout, stats);
 }
 
 fn print_enqueue(scenario: &PayloadScenario, fanout: usize) {
     let payload_vec = make_payload(scenario.size);
-    let mut harness = EnqueueHarness::new(fanout);
+    let mut harness = EnqueueVecHarness::new(fanout);
     let stats = measure_allocations(|| {
         harness.enqueue_vec(black_box(&payload_vec), ENQUEUE_ROUNDS);
         black_box(&harness);
@@ -167,33 +150,30 @@ fn print_enqueue(scenario: &PayloadScenario, fanout: usize) {
         "enqueue",
         scenario,
         fanout,
-        "copied_vec",
+        "base_vec",
         fanout * ENQUEUE_ROUNDS,
         stats,
     );
 
-    #[cfg(feature = "arc-payload")]
-    {
-        let payload_shared = shared_payload(scenario.size);
-        let mut harness = EnqueueHarness::new(fanout);
-        let stats = measure_allocations(|| {
-            harness.enqueue_bytes(black_box(&payload_shared), ENQUEUE_ROUNDS);
-            black_box(&harness);
-        });
-        print_row(
-            "enqueue",
-            scenario,
-            fanout,
-            "shared_arc",
-            fanout * ENQUEUE_ROUNDS,
-            stats,
-        );
-    }
+    let payload_shared = shared_payload(scenario.size);
+    let mut harness = EnqueueSharedHarness::new(fanout);
+    let stats = measure_allocations(|| {
+        harness.enqueue_shared(black_box(&payload_shared), ENQUEUE_ROUNDS);
+        black_box(&harness);
+    });
+    print_row(
+        "enqueue",
+        scenario,
+        fanout,
+        "arc_meta",
+        fanout * ENQUEUE_ROUNDS,
+        stats,
+    );
 }
 
 fn print_full_egress(scenario: &PayloadScenario, fanout: usize) {
     let payload_vec = make_payload(scenario.size);
-    let mut harness = FullEgressHarness::new(fanout);
+    let mut harness = FullEgressVecHarness::new(fanout);
     let stats = measure_allocations(|| {
         let transmit_count = harness.egress_vec(black_box(&payload_vec), FULL_EGRESS_ROUNDS);
         black_box(transmit_count);
@@ -202,33 +182,29 @@ fn print_full_egress(scenario: &PayloadScenario, fanout: usize) {
         "full_egress",
         scenario,
         fanout,
-        "copied_vec",
+        "base_vec",
         fanout * FULL_EGRESS_ROUNDS,
         stats,
     );
 
-    #[cfg(feature = "arc-payload")]
-    {
-        let payload_shared = shared_payload(scenario.size);
-        let mut harness = FullEgressHarness::new(fanout);
-        let stats = measure_allocations(|| {
-            let transmit_count =
-                harness.egress_bytes(black_box(&payload_shared), FULL_EGRESS_ROUNDS);
-            black_box(transmit_count);
-        });
-        print_row(
-            "full_egress",
-            scenario,
-            fanout,
-            "shared_arc",
-            fanout * FULL_EGRESS_ROUNDS,
-            stats,
-        );
-    }
+    let payload_shared = shared_payload(scenario.size);
+    let mut harness = FullEgressSharedHarness::new(fanout);
+    let stats = measure_allocations(|| {
+        let transmit_count = harness.egress_shared(black_box(&payload_shared), FULL_EGRESS_ROUNDS);
+        black_box(transmit_count);
+    });
+    print_row(
+        "full_egress",
+        scenario,
+        fanout,
+        "arc_meta",
+        fanout * FULL_EGRESS_ROUNDS,
+        stats,
+    );
 }
 
 fn print_full_relay_rtp(scenario: &PayloadScenario, fanout: usize, full_relay_rounds: usize) {
-    let mut harness = FullRelayHarness::new(fanout, scenario.size, full_relay_rounds);
+    let mut harness = FullRelayVecHarness::new(fanout, scenario.size, full_relay_rounds);
     let stats = measure_allocations(|| {
         let transmit_count = harness.relay_vec();
         black_box(transmit_count);
@@ -237,31 +213,28 @@ fn print_full_relay_rtp(scenario: &PayloadScenario, fanout: usize, full_relay_ro
         "full_relay_rtp",
         scenario,
         fanout,
-        "copied_vec",
+        "base_vec",
         fanout * full_relay_rounds,
         stats,
     );
 
-    #[cfg(feature = "arc-payload")]
-    {
-        let mut harness = FullRelayHarness::new(fanout, scenario.size, full_relay_rounds);
-        let stats = measure_allocations(|| {
-            let transmit_count = harness.relay_shared();
-            black_box(transmit_count);
-        });
-        print_row(
-            "full_relay_rtp",
-            scenario,
-            fanout,
-            "shared_arc",
-            fanout * full_relay_rounds,
-            stats,
-        );
-    }
+    let mut harness = FullRelaySharedHarness::new(fanout, scenario.size, full_relay_rounds);
+    let stats = measure_allocations(|| {
+        let transmit_count = harness.relay_shared();
+        black_box(transmit_count);
+    });
+    print_row(
+        "full_relay_rtp",
+        scenario,
+        fanout,
+        "arc_meta",
+        fanout * full_relay_rounds,
+        stats,
+    );
 }
 
 fn print_receive_rtp_event(scenario: &PayloadScenario) {
-    let mut harness = ReceiveRtpHarness::new(scenario.size, RECEIVE_ROUNDS);
+    let mut harness = ReceiveRtpVecHarness::new(scenario.size, RECEIVE_ROUNDS);
     let stats = measure_allocations(|| {
         let payload_bytes = harness.receive_events();
         black_box(payload_bytes);
@@ -270,7 +243,20 @@ fn print_receive_rtp_event(scenario: &PayloadScenario) {
         "receive_rtp_event",
         scenario,
         1,
-        "event_only",
+        "base_vec",
+        RECEIVE_ROUNDS,
+        stats,
+    );
+    let mut harness = ReceiveRtpSharedHarness::new(scenario.size, RECEIVE_ROUNDS);
+    let stats = measure_allocations(|| {
+        let payload_bytes = harness.receive_events();
+        black_box(payload_bytes);
+    });
+    print_row(
+        "receive_rtp_event",
+        scenario,
+        1,
+        "arc_meta",
         RECEIVE_ROUNDS,
         stats,
     );
@@ -279,7 +265,7 @@ fn print_receive_rtp_event(scenario: &PayloadScenario) {
 fn print_receive_rtp_fanout(scenario: &PayloadScenario, fanout: usize) {
     let targets = benchmark_targets(fanout);
     let mut vec_out = Vec::with_capacity(fanout);
-    let mut harness = ReceiveRtpHarness::new(scenario.size, RECEIVE_ROUNDS);
+    let mut harness = ReceiveRtpVecHarness::new(scenario.size, RECEIVE_ROUNDS);
     let stats = measure_allocations(|| {
         let forwarded = harness.fanout_vec(black_box(&targets), &mut vec_out);
         black_box(forwarded);
@@ -289,33 +275,30 @@ fn print_receive_rtp_fanout(scenario: &PayloadScenario, fanout: usize) {
         "receive_rtp_fanout",
         scenario,
         fanout,
-        "copied_vec",
+        "base_vec",
         fanout * RECEIVE_ROUNDS,
         stats,
     );
 
-    #[cfg(feature = "arc-payload")]
-    {
-        let mut shared_out = Vec::with_capacity(fanout);
-        let mut harness = ReceiveRtpHarness::new(scenario.size, RECEIVE_ROUNDS);
-        let stats = measure_allocations(|| {
-            let forwarded = harness.fanout_shared(black_box(&targets), &mut shared_out);
-            black_box(forwarded);
-            black_box(&shared_out);
-        });
-        print_row(
-            "receive_rtp_fanout",
-            scenario,
-            fanout,
-            "shared_arc",
-            fanout * RECEIVE_ROUNDS,
-            stats,
-        );
-    }
+    let mut shared_out = Vec::with_capacity(fanout);
+    let mut harness = ReceiveRtpSharedHarness::new(scenario.size, RECEIVE_ROUNDS);
+    let stats = measure_allocations(|| {
+        let forwarded = harness.fanout_shared(black_box(&targets), &mut shared_out);
+        black_box(forwarded);
+        black_box(&shared_out);
+    });
+    print_row(
+        "receive_rtp_fanout",
+        scenario,
+        fanout,
+        "arc_meta",
+        fanout * RECEIVE_ROUNDS,
+        stats,
+    );
 }
 
 fn print_receive_media_event(scenario: &PayloadScenario) {
-    let mut harness = ReceiveMediaHarness::new(scenario.size, RECEIVE_ROUNDS);
+    let mut harness = ReceiveMediaVecHarness::new(scenario.size, RECEIVE_ROUNDS);
     let stats = measure_allocations(|| {
         let payload_bytes = harness.receive_events();
         black_box(payload_bytes);
@@ -324,7 +307,20 @@ fn print_receive_media_event(scenario: &PayloadScenario) {
         "receive_media_event",
         scenario,
         1,
-        "event_only",
+        "base_vec",
+        RECEIVE_ROUNDS,
+        stats,
+    );
+    let mut harness = ReceiveMediaSharedHarness::new(scenario.size, RECEIVE_ROUNDS);
+    let stats = measure_allocations(|| {
+        let payload_bytes = harness.receive_events();
+        black_box(payload_bytes);
+    });
+    print_row(
+        "receive_media_event",
+        scenario,
+        1,
+        "arc_meta",
         RECEIVE_ROUNDS,
         stats,
     );
@@ -333,7 +329,7 @@ fn print_receive_media_event(scenario: &PayloadScenario) {
 fn print_receive_media_fanout(scenario: &PayloadScenario, fanout: usize) {
     let targets = benchmark_targets(fanout);
     let mut vec_out = Vec::with_capacity(fanout);
-    let mut harness = ReceiveMediaHarness::new(scenario.size, RECEIVE_ROUNDS);
+    let mut harness = ReceiveMediaVecHarness::new(scenario.size, RECEIVE_ROUNDS);
     let stats = measure_allocations(|| {
         let forwarded = harness.fanout_vec(black_box(&targets), &mut vec_out);
         black_box(forwarded);
@@ -343,29 +339,26 @@ fn print_receive_media_fanout(scenario: &PayloadScenario, fanout: usize) {
         "receive_media_fanout",
         scenario,
         fanout,
-        "copied_vec",
+        "base_vec",
         fanout * RECEIVE_ROUNDS,
         stats,
     );
 
-    #[cfg(feature = "arc-payload")]
-    {
-        let mut shared_out = Vec::with_capacity(fanout);
-        let mut harness = ReceiveMediaHarness::new(scenario.size, RECEIVE_ROUNDS);
-        let stats = measure_allocations(|| {
-            let forwarded = harness.fanout_shared(black_box(&targets), &mut shared_out);
-            black_box(forwarded);
-            black_box(&shared_out);
-        });
-        print_row(
-            "receive_media_fanout",
-            scenario,
-            fanout,
-            "shared_arc",
-            fanout * RECEIVE_ROUNDS,
-            stats,
-        );
-    }
+    let mut shared_out = Vec::with_capacity(fanout);
+    let mut harness = ReceiveMediaSharedHarness::new(scenario.size, RECEIVE_ROUNDS);
+    let stats = measure_allocations(|| {
+        let forwarded = harness.fanout_shared(black_box(&targets), &mut shared_out);
+        black_box(forwarded);
+        black_box(&shared_out);
+    });
+    print_row(
+        "receive_media_fanout",
+        scenario,
+        fanout,
+        "arc_meta",
+        fanout * RECEIVE_ROUNDS,
+        stats,
+    );
 }
 
 fn measure_allocations(mut run: impl FnMut()) -> AllocationStats {

@@ -9,16 +9,15 @@ fi
 bench_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 str0m_path=$(cd "$1" && pwd)
 result_root=$2
-src_dir="$result_root/meta-src"
-target_dir="$result_root/meta-target"
+src_dir="$result_root/meta-callgrind-src"
+target_dir="$result_root/meta-callgrind-target"
 
 mkdir -p "$result_root"
 rm -rf "$src_dir" "$target_dir"
 rsync -a --exclude target --exclude .git "$bench_root/" "$src_dir/"
 perl -0pi -e "s#^str0m = \\{[^\\n]*\\}#str0m = { path = \"$str0m_path\", default-features = false, features = [\"aws-lc-rs\"] }#m" "$src_dir/Cargo.toml"
 
-printf '== criterion ==\n'
+printf '== callgrind ==\n'
 CARGO_TARGET_DIR="$target_dir" cargo bench \
     --manifest-path "$src_dir/Cargo.toml" \
-    --bench fanout \
-    -- --noplot --quiet | tee "$result_root/meta-cpu.log"
+    --bench full_relay_callgrind | tee "$result_root/meta-callgrind.log"
