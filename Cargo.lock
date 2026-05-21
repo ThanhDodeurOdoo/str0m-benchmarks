@@ -628,7 +628,7 @@ dependencies = [
 [[package]]
 name = "is"
 version = "0.9.0"
-source = "git+https://github.com/ThanhDodeurOdoo/str0m.git?branch=meta-byteref-2#2fcc5357194caa6010771faca19923c5d34d0834"
+source = "git+https://github.com/algesten/str0m.git?branch=meta-type#d9e7c410127f0f2d8c007e1d30ad02cf623dbe84"
 dependencies = [
  "crc",
  "serde",
@@ -1146,7 +1146,7 @@ dependencies = [
 [[package]]
 name = "str0m"
 version = "0.19.0"
-source = "git+https://github.com/ThanhDodeurOdoo/str0m.git?branch=meta-byteref-2#2fcc5357194caa6010771faca19923c5d34d0834"
+source = "git+https://github.com/algesten/str0m.git?branch=meta-type#d9e7c410127f0f2d8c007e1d30ad02cf623dbe84"
 dependencies = [
  "arrayvec",
  "base64ct",
@@ -1166,7 +1166,7 @@ dependencies = [
 [[package]]
 name = "str0m-aws-lc-rs"
 version = "0.4.0"
-source = "git+https://github.com/ThanhDodeurOdoo/str0m.git?branch=meta-byteref-2#2fcc5357194caa6010771faca19923c5d34d0834"
+source = "git+https://github.com/algesten/str0m.git?branch=meta-type#d9e7c410127f0f2d8c007e1d30ad02cf623dbe84"
 dependencies = [
  "aws-lc-rs",
  "dimpl",
@@ -1187,7 +1187,7 @@ dependencies = [
 [[package]]
 name = "str0m-proto"
 version = "0.5.0"
-source = "git+https://github.com/ThanhDodeurOdoo/str0m.git?branch=meta-byteref-2#2fcc5357194caa6010771faca19923c5d34d0834"
+source = "git+https://github.com/algesten/str0m.git?branch=meta-type#d9e7c410127f0f2d8c007e1d30ad02cf623dbe84"
 dependencies = [
  "base64ct",
  "dimpl",

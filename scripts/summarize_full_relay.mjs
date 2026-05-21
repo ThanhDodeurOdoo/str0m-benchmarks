@@ -107,14 +107,14 @@ function cpuTable(baseRows, arcRows) {
     const lines = [
         "### str0m direct RTP relay path CPU",
         "",
-        "| payload | users | base Vec | Arc Meta | gain |",
+        "| payload | users | Default Meta Vec | Ref Meta | gain |",
         "|---|---:|---:|---:|---:|",
     ];
 
     for (const base of orderedRows(baseRows)) {
         const arc = arcRows.get(base.key);
         if (!arc) {
-            throw new Error(`missing Arc Meta CPU row for ${base.key}`);
+            throw new Error(`missing Ref Meta CPU row for ${base.key}`);
         }
 
         lines.push(
@@ -173,14 +173,14 @@ function memoryTable(baseRows, arcRows) {
     const lines = [
         "### str0m direct RTP relay path allocations",
         "",
-        "| payload | users | base Vec | Arc Meta | saved |",
+        "| payload | users | Default Meta Vec | Ref Meta | saved |",
         "|---|---:|---:|---:|---:|",
     ];
 
     for (const base of orderedRows(baseRows)) {
         const arc = arcRows.get(base.key);
         if (!arc) {
-            throw new Error(`missing Arc Meta allocation row for ${base.key}`);
+            throw new Error(`missing Ref Meta allocation row for ${base.key}`);
         }
 
         lines.push(
@@ -270,14 +270,19 @@ function singleMetricValue(metricDiff) {
 
     const metrics = metricDiff.metrics;
     if (metrics && typeof metrics === "object") {
-        if ("Single" in metrics) {
-            return metricValue(metrics.Single);
+        for (const key of ["Single", "This", "New", "Left", "Right"]) {
+            if (key in metrics) {
+                return metricValue(metrics[key]);
+            }
         }
-        if ("This" in metrics) {
-            return metricValue(metrics.This);
-        }
-        if ("New" in metrics) {
-            return metricValue(metrics.New);
+
+        const values = Object.values(metrics).filter(
+            (value) =>
+                typeof value === "number" ||
+                (value && typeof value === "object" && ("Int" in value || "Float" in value)),
+        );
+        if (values.length === 1) {
+            return metricValue(values[0]);
         }
     }
 
@@ -367,7 +372,7 @@ function callgrindTable(rows) {
     const lines = [
         "### str0m direct RTP relay path Callgrind instructions",
         "",
-        "| path | payload | users | base Vec | Arc Meta | gain |",
+        "| path | payload | users | Default Meta Vec | Ref Meta | gain |",
         "|---|---:|---:|---:|---:|---:|",
     ];
 

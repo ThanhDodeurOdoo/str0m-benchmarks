@@ -9,7 +9,7 @@ bytes-payload = ["arc-payload"]
 jemalloc = ["dep:tikv-jemallocator"]
 
 [dependencies]
-str0m = { git = "https://github.com/ThanhDodeurOdoo/str0m.git", branch = "meta-byteref-2", default-features = false, features = ["aws-lc-rs"] }
+str0m = { git = "https://github.com/algesten/str0m.git", branch = "meta-type", default-features = false, features = ["aws-lc-rs"] }
 tikv-jemallocator = { version = "0.6.1", optional = true }
 
 [dev-dependencies]

@@ -15,12 +15,32 @@ const DEFAULT_CONFIGURED_FANOUT: usize = 30;
 
 pub type SharedPayload = Arc<[u8]>;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ArcInput(SharedPayload);
+
+impl AsRef<[u8]> for ArcInput {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl From<SharedPayload> for ArcInput {
+    fn from(payload: SharedPayload) -> Self {
+        Self(payload)
+    }
+}
+
+impl From<ArcInput> for Vec<u8> {
+    fn from(payload: ArcInput) -> Self {
+        payload.0.to_vec()
+    }
+}
+
 #[derive(Debug)]
 pub struct SharedMeta;
 
 impl Meta for SharedMeta {
-    type RtpBuffer = SharedPayload;
-    type MediaBuffer = SharedPayload;
+    type Input = ArcInput;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -237,7 +257,7 @@ struct PendingDatagram {
 impl<M: Meta> EnqueueHarness<M> {
     pub fn new(fanout: usize) -> Self {
         let now = Instant::now();
-        let mut rtc = Rtc::builder().set_rtp_mode(true).build_with_meta::<M>(now);
+        let mut rtc = Rtc::builder().set_rtp_mode(true).build_meta::<M>(now);
         let targets = benchmark_targets(fanout);
 
         for (idx, ssrc) in targets.iter().copied().enumerate() {
@@ -306,7 +326,7 @@ impl EnqueueHarness<SharedMeta> {
                         false,
                         self.ext_vals.clone(),
                         false,
-                        payload.clone(),
+                        payload.to_vec(),
                     )
                     .expect("enqueue shared payload");
                 self.seq_no += 1;
@@ -323,8 +343,8 @@ impl<M: Meta> FullEgressHarness<M> {
         let mut senders = Vec::with_capacity(fanout);
         for idx in 0..fanout {
             let now = Instant::now();
-            let left = Rtc::builder().set_rtp_mode(true).build_with_meta::<M>(now);
-            let right = Rtc::builder().set_rtp_mode(true).build_with_meta::<M>(now);
+            let left = Rtc::builder().set_rtp_mode(true).build_meta::<M>(now);
+            let right = Rtc::builder().set_rtp_mode(true).build_meta::<M>(now);
             let ConnectedPair {
                 mut left,
                 right: _right,
@@ -417,7 +437,7 @@ impl FullEgressHarness<SharedMeta> {
                     seq_no,
                     timestamp,
                     ext_vals,
-                    payload.clone(),
+                    payload.to_vec(),
                 )
             },
         )
@@ -431,8 +451,8 @@ impl<M: Meta> FullRelayHarness<M> {
 
         for idx in 0..fanout {
             let now = Instant::now();
-            let left = Rtc::builder().set_rtp_mode(true).build_with_meta::<M>(now);
-            let right = Rtc::builder().set_rtp_mode(true).build_with_meta::<M>(now);
+            let left = Rtc::builder().set_rtp_mode(true).build_meta::<M>(now);
+            let right = Rtc::builder().set_rtp_mode(true).build_meta::<M>(now);
             let ConnectedPair {
                 mut left,
                 right: _right,
@@ -560,13 +580,13 @@ impl<M: Meta> ReceiveRtpHarness<M> {
         let mut payload_bytes = 0;
         self.receive_each(|event| {
             if let Event::RtpPacket(packet) = event {
-                payload_bytes += packet.payload.as_ref().len();
+                payload_bytes += packet.payload.len();
             }
         });
         payload_bytes
     }
 
-    fn receive_each(&mut self, mut on_event: impl FnMut(Event<M>)) -> usize {
+    fn receive_each(&mut self, mut on_event: impl FnMut(Event)) -> usize {
         receive_each(
             &mut self.receiver,
             &self.datagrams,
@@ -600,10 +620,11 @@ impl ReceiveRtpHarness<SharedMeta> {
         let mut forwarded = 0;
         self.receive_each(|event| {
             if let Event::RtpPacket(packet) = event {
+                let payload = SharedPayload::from(packet.payload);
                 forward_payload_shared(
                     packet.header.payload_type,
                     &packet.header.ext_vals,
-                    &packet.payload,
+                    &payload,
                     targets,
                     out,
                 );
@@ -629,13 +650,13 @@ impl<M: Meta> ReceiveMediaHarness<M> {
         let mut payload_bytes = 0;
         self.receive_each(|event| {
             if let Event::MediaData(data) = event {
-                payload_bytes += data.data.as_ref().len();
+                payload_bytes += data.data.len();
             }
         });
         payload_bytes
     }
 
-    fn receive_each(&mut self, mut on_event: impl FnMut(Event<M>)) -> usize {
+    fn receive_each(&mut self, mut on_event: impl FnMut(Event)) -> usize {
         receive_each(
             &mut self.receiver,
             &self.datagrams,
@@ -663,7 +684,8 @@ impl ReceiveMediaHarness<SharedMeta> {
         let mut forwarded = 0;
         self.receive_each(|event| {
             if let Event::MediaData(data) = event {
-                forward_payload_shared(data.pt, &data.ext_vals, &data.data, targets, out);
+                let payload = SharedPayload::from(data.data);
+                forward_payload_shared(data.pt, &data.ext_vals, &payload, targets, out);
                 forwarded += out.len();
             }
         });
@@ -700,11 +722,11 @@ impl<M: Meta> ReceiveHarnessBuilder<M> {
         let now = Instant::now();
         let sender = Rtc::builder().set_rtp_mode(true).build(now);
         let receiver = if self.rtp_mode_receiver {
-            Rtc::builder().set_rtp_mode(true).build_with_meta::<M>(now)
+            Rtc::builder().set_rtp_mode(true).build_meta::<M>(now)
         } else {
             Rtc::builder()
                 .set_reordering_size_audio(0)
-                .build_with_meta::<M>(now)
+                .build_meta::<M>(now)
         };
         let ConnectedPair {
             mut left,
@@ -773,7 +795,7 @@ fn receive_each<M: Meta>(
     receiver: &mut Rtc<M>,
     datagrams: &[PendingDatagram],
     now: &mut Instant,
-    on_event: &mut impl FnMut(Event<M>),
+    on_event: &mut impl FnMut(Event),
 ) -> usize {
     let mut events = 0;
     for packet in datagrams {
@@ -800,7 +822,7 @@ fn receive_from_datagram(packet: &PendingDatagram) -> Receive<'_> {
     }
 }
 
-fn drain_receiver_events<M: Meta>(rtc: &mut Rtc<M>, on_event: &mut impl FnMut(Event<M>)) -> usize {
+fn drain_receiver_events<M: Meta>(rtc: &mut Rtc<M>, on_event: &mut impl FnMut(Event)) -> usize {
     let mut event_count = 0;
     loop {
         match rtc.poll_output().expect("poll receiver output") {
@@ -820,7 +842,7 @@ fn write_sender_packet<M: Meta>(
     seq_no: u64,
     timestamp: u32,
     ext_vals: ExtensionValues,
-    payload: impl Into<M::RtpBuffer>,
+    payload: Vec<u8>,
 ) {
     let mut direct = sender.rtc.direct_api();
     let stream = direct.stream_tx(&sender.ssrc).expect("declared stream");
