@@ -57,9 +57,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y rsync valgrind
-          cargo install iai-callgrind-runner --version 0.16.1 --locked
+          cargo install gungraun-runner --version 0.19.0 --locked
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-          echo "IAI_CALLGRIND_RUNNER=$HOME/.cargo/bin/iai-callgrind-runner" >> "$GITHUB_ENV"
+          echo "GUNGRAUN_RUNNER=$HOME/.cargo/bin/gungraun-runner" >> "$GITHUB_ENV"
 
       - name: checkout baseline str0m
         uses: actions/checkout@v4
@@ -102,7 +102,7 @@ jobs:
           rustc --version
           cargo --version
           valgrind --version
-          iai-callgrind-runner --version
+          gungraun-runner --version
 
       - name: run rx lookup cleanup Callgrind comparison
         working-directory: str0m-benchmarks
@@ -115,8 +115,8 @@ jobs:
         run: |
           set -o pipefail
           node scripts/summarize_rx_lookup_callgrind.mjs \
-            "$RESULT_DIR/before-callgrind-target/iai" \
-            "$RESULT_DIR/after-callgrind-target/iai" \
+            "$RESULT_DIR/before-callgrind-target/gungraun" \
+            "$RESULT_DIR/after-callgrind-target/gungraun" \
             | tee "$RESULT_DIR/summary.md"
           cat "$RESULT_DIR/summary.md" >> "$GITHUB_STEP_SUMMARY"
 

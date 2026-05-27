@@ -5,7 +5,7 @@ import fs from "node:fs";
 const [beforeDir, afterDir] = process.argv.slice(2);
 
 if (!beforeDir || !afterDir) {
-    throw new Error("usage: summarize_rx_lookup_callgrind.mjs <before-iai-dir> <after-iai-dir>");
+    throw new Error("usage: summarize_rx_lookup_callgrind.mjs <before-gungraun-dir> <after-gungraun-dir>");
 }
 
 function read(path) {

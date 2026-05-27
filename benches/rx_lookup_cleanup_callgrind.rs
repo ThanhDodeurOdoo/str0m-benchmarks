@@ -6,11 +6,11 @@
 #![cfg(feature = "rx-lookup-cleanup")]
 #![allow(
     clippy::exit,
-    reason = "iai-callgrind's generated benchmark harness exits with the measured runner status"
+    reason = "Gungraun's generated benchmark harness exits with the measured runner status"
 )]
 #![allow(
     non_local_definitions,
-    reason = "iai-callgrind generates benchmark registration code outside the local item scope"
+    reason = "Gungraun generates benchmark registration code outside the local item scope"
 )]
 
 use std::env;
@@ -19,7 +19,7 @@ use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Once;
 use std::time::{Duration, Instant};
 
-use iai_callgrind::{
+use gungraun::{
     Callgrind, CallgrindMetrics, LibraryBenchmarkConfig, library_benchmark,
     library_benchmark_group, main,
 };

@@ -23,7 +23,7 @@ scripts/run-stack-bench.sh ../str0m.worktrees/meta-byteref logs
 scripts/run-stack-memory.sh ../str0m.worktrees/meta-byteref logs
 scripts/run-stack-callgrind.sh ../str0m.worktrees/meta-byteref logs
 scripts/run-vp8-rewrite-callgrind.sh ../str0m.worktrees/payload-patches logs
-CALLGRIND_DIR=logs/meta-callgrind-target/iai node scripts/summarize_full_relay.mjs
+CALLGRIND_DIR=logs/meta-callgrind-target/gungraun node scripts/summarize_full_relay.mjs
 ```
 
 the VP8 rewrite Callgrind benchmark compares two VP8 fanout strategies against
@@ -58,7 +58,7 @@ use `RX_LOOKUP_STREAMS` and `RX_LOOKUP_PACKETS` to change those sizes
 
 the `rx lookup cleanup callgrind` GitHub Actions workflow runs the same
 Callgrind comparison on `ubuntu-24.04`, installs Valgrind and uploads the raw
-`iai-callgrind` artifacts
+Gungraun artifacts
 
 the default dispatch checks out `ThanhDodeurOdoo/str0m@main` twice and applies
 the one-line cleanup timestamp fix to the after checkout. set
