@@ -1,0 +1,108 @@
+name: idle drain callgrind
+
+on:
+  workflow_dispatch:
+    inputs:
+      before_repository:
+        description: baseline str0m repository
+        required: true
+        default: algesten/str0m
+      before_ref:
+        description: baseline str0m ref
+        required: true
+        default: 0.20.0
+      after_repository:
+        description: candidate str0m repository
+        required: true
+        default: algesten/str0m
+      after_ref:
+        description: candidate str0m ref
+        required: true
+        default: 0.21.0
+      idle_sessions:
+        description: RTP-mode sessions to drain
+        required: true
+        default: "128"
+      idle_rounds:
+        description: drain rounds per benchmark function
+        required: true
+        default: "1"
+
+jobs:
+  idle-drain-callgrind:
+    name: idle drain callgrind
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+
+    env:
+      IDLE_DRAIN_SESSIONS: ${{ inputs.idle_sessions }}
+      IDLE_DRAIN_ROUNDS: ${{ inputs.idle_rounds }}
+      BEFORE_LABEL: ${{ inputs.before_ref }}
+      AFTER_LABEL: ${{ inputs.after_ref }}
+      RESULT_DIR: logs/idle-drain-callgrind
+
+    steps:
+      - name: checkout benchmark repo
+        uses: actions/checkout@v4
+        with:
+          path: str0m-benchmarks
+
+      - name: install rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: install Callgrind tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rsync valgrind
+          cargo install gungraun-runner --version 0.19.0 --locked
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          echo "GUNGRAUN_RUNNER=$HOME/.cargo/bin/gungraun-runner" >> "$GITHUB_ENV"
+
+      - name: checkout baseline str0m
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.before_repository }}
+          ref: ${{ inputs.before_ref }}
+          path: str0m-before
+          token: ${{ secrets.STR0M_CHECKOUT_TOKEN || github.token }}
+
+      - name: checkout candidate str0m
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.after_repository }}
+          ref: ${{ inputs.after_ref }}
+          path: str0m-after
+          token: ${{ secrets.STR0M_CHECKOUT_TOKEN || github.token }}
+
+      - name: show tool versions
+        working-directory: str0m-benchmarks
+        run: |
+          rustc --version
+          cargo --version
+          valgrind --version
+          gungraun-runner --version
+
+      - name: run idle drain Callgrind comparison
+        working-directory: str0m-benchmarks
+        run: |
+          set -o pipefail
+          scripts/run-idle-drain-callgrind.sh ../str0m-before ../str0m-after "$RESULT_DIR"
+
+      - name: summarize Callgrind comparison
+        working-directory: str0m-benchmarks
+        run: |
+          set -o pipefail
+          node scripts/summarize_idle_drain_callgrind.mjs \
+            "$RESULT_DIR/before-callgrind-target/gungraun" \
+            "$RESULT_DIR/after-callgrind-target/gungraun" \
+            | tee "$RESULT_DIR/summary.md"
+          cat "$RESULT_DIR/summary.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: upload Callgrind artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: idle-drain-callgrind
+          path: |
+            str0m-benchmarks/logs/idle-drain-callgrind/
+          if-no-files-found: ignore

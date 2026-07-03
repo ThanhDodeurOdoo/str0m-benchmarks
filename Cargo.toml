@@ -7,6 +7,7 @@ version = "0.1.0"
 default = ["meta-type"]
 arc-payload = []
 bytes-payload = ["arc-payload"]
+idle-drain = []
 jemalloc = ["dep:tikv-jemallocator"]
 meta-type = []
 rx-lookup-cleanup = []
@@ -34,6 +35,11 @@ required-features = ["meta-type"]
 harness = false
 name = "vp8_rewrite_callgrind"
 required-features = ["vp8-rewrite"]
+
+[[bench]]
+harness = false
+name = "idle_drain_callgrind"
+required-features = ["idle-drain"]
 
 [[bench]]
 harness = false
